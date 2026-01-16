@@ -451,20 +451,23 @@ public class SocialSharing extends CordovaPlugin {
     }
 
     if (customFileName != null && !customFileName.isEmpty()) {
-      // Use custom filename if provided
+      // Use custom filename for ALL file types
+      String fileType = getMIMEType(image);
+      sendIntent.setType(fileType);
+
       if (image.startsWith("http")) {
         URLConnection connection = new URL(image).openConnection();
-        String fileType = getMIMEType(image);
-        sendIntent.setType(fileType);
         saveFile(getBytes(connection.getInputStream()), dir, customFileName);
         localImage = "file://" + dir + "/" + customFileName;
       } else if (image.startsWith("www/")) {
         saveFile(getBytes(webView.getContext().getAssets().open(image)), dir, customFileName);
         localImage = "file://" + dir + "/" + customFileName;
       } else if (image.startsWith("file://")) {
-        // File already exists, just set MIME type
-        String type = getMIMEType(image);
-        sendIntent.setType(type);
+        // Read local file and save with custom name
+        String filePath = image.substring(7); // Remove "file://"
+        java.io.File file = new java.io.File(filePath);
+        saveFile(getBytes(new java.io.FileInputStream(file)), dir, customFileName);
+        localImage = "file://" + dir + "/" + customFileName;
       } else if (image.startsWith("data:")) {
         // Safeguard for https://code.google.com/p/android/issues/detail?id#7901#c43
         if (!image.contains(";base64,")) {
@@ -479,9 +482,10 @@ public class SocialSharing extends CordovaPlugin {
         saveFile(Base64.decode(encodedImg, Base64.DEFAULT), dir, customFileName);
         localImage = "file://" + dir + "/" + customFileName;
       } else {
-        // Local file path
-        String type = getMIMEType(image);
-        sendIntent.setType(type);
+        // Local file path - read and save with custom name
+        java.io.File file = new java.io.File(image);
+        saveFile(getBytes(new java.io.FileInputStream(file)), dir, customFileName);
+        localImage = "file://" + dir + "/" + customFileName;
       }
     } else if (image.startsWith("http") || image.startsWith("www/")) {
       String filename = getFileName(image);
