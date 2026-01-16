@@ -97,7 +97,7 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
 
     if (filenames != (id)[NSNull null] && filenames != nil && filenames.count > 0) {
       NSMutableArray *files = [[NSMutableArray alloc] init];
-      for (NSString* filename in filenames) {
+      for (id filename in filenames) {
         NSObject *file = [self getImage:filename];
         if (file == nil) {
           file = [self getFile:filename];
@@ -307,7 +307,7 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
     [composeViewController setInitialText:message];
   }
 
-  for (NSString* filename in filenames) {
+  for (id filename in filenames) {
     UIImage* image = [self getImage:filename];
     if (image != nil) {
       [composeViewController addImage:image];
@@ -473,24 +473,6 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
   return @"attachment";
 }
 
-- (NSString*) getMimeTypeFromFileExtension:(NSString*)extension {
-  if (!extension) {
-    return nil;
-  }
-  // Get the UTI from the file's extension
-  CFStringRef ext = (CFStringRef)CFBridgingRetain(extension);
-  CFStringRef type = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, ext, NULL);
-  // Converting UTI to a mime type
-  NSString *result = (NSString*)CFBridgingRelease(UTTypeCopyPreferredTagWithClass(type, kUTTagClassMIMEType));
-  CFRelease(ext);
-  CFRelease(type);
-  if (result == nil) {
-    result = @"application/octet-stream";
-  }
-
-  return result;
-}
-
 /**
  * Delegate will be called after the mail composer did finish an action
  * to dismiss the view.
@@ -612,7 +594,7 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
 
   // only use the first image (for now.. maybe we can share in a loop?)
   UIImage* image = nil;
-  for (NSString* filename in filenames) {
+  for (id filename in filenames) {
     image = [self getImage:filename];
     break;
   }
@@ -667,7 +649,7 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
 
   // only use the first image (for now.. maybe we can share in a loop?)
   UIImage *image = nil;
-  for (NSString *filename in filenames) {
+  for (id filename in filenames) {
     image = [self getImage:filename];
     break;
   }
@@ -720,7 +702,7 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
   NSArray *filenames = [command.arguments objectAtIndex:0];
   [self.commandDelegate runInBackground:^{
     bool shared = false;
-    for (NSString* filename in filenames) {
+    for (id filename in filenames) {
       UIImage* image = [self getImage:filename];
       if (image != nil) {
         shared = true;
@@ -812,22 +794,55 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
 
     if (customFileName != nil && customFileName != (id)[NSNull null]) {
       // Use custom filename if provided
+      NSString *finalFileName = customFileName;
+
+      // If custom filename doesn't have an extension, try to get it from the original file
+      if (![customFileName containsString:@"."]) {
+        NSString *extension = nil;
+
+        // For data: URLs, extract extension from MIME type
+        if (rangeData.location != NSNotFound) {
+          NSString *mimeType = (NSString*)[[[fileName substringFromIndex:rangeData.location+rangeData.length] componentsSeparatedByString: @";"] objectAtIndex:0];
+          if ([mimeType hasPrefix:@"data:"]) {
+            mimeType = [mimeType substringFromIndex:5]; // Remove "data:" prefix
+          }
+          // Use new helper method to convert MIME type to extension
+          extension = [self getFileExtensionFromMimeType:mimeType];
+        } else {
+          // For other URLs and paths, use pathExtension
+          extension = [fileName pathExtension];
+          // Handle query parameters in URLs
+          if ([extension containsString:@"?"]) {
+            extension = [[extension componentsSeparatedByString:@"?"] firstObject];
+          }
+        }
+
+        if (extension && extension.length > 0) {
+          finalFileName = [customFileName stringByAppendingPathExtension:extension];
+        }
+      }
+
       if ([fileName hasPrefix:@"http"]) {
         NSURL *url = [NSURL URLWithString:fileName];
         NSData *fileData = [NSData dataWithContentsOfURL:url];
-        file = [NSURL fileURLWithPath:[self storeInFile:customFileName fileData:fileData]];
+        file = [NSURL fileURLWithPath:[self storeInFile:finalFileName fileData:fileData]];
       } else if ([fileName hasPrefix:@"www/"]) {
         NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
         NSString *fullPath = [NSString stringWithFormat:@"%@/%@", bundlePath, fileName];
-        file = [NSURL fileURLWithPath:fullPath];
+        NSData *fileData = [NSData dataWithContentsOfFile:fullPath];
+        file = [NSURL fileURLWithPath:[self storeInFile:finalFileName fileData:fileData]];
       } else if ([fileName hasPrefix:@"file://"]) {
-        file = [NSURL fileURLWithPath:[fileName substringFromIndex:6]];
+        NSString *filePath = [fileName substringFromIndex:6];
+        NSData *fileData = [NSData dataWithContentsOfFile:filePath];
+        file = [NSURL fileURLWithPath:[self storeInFile:finalFileName fileData:fileData]];
       } else if (rangeData.location != NSNotFound) {
         NSString *base64content = (NSString*)[[fileName componentsSeparatedByString: @","] lastObject];
         NSData* data = [SocialSharing dataFromBase64String:base64content];
-        file = [NSURL fileURLWithPath:[self storeInFile:customFileName fileData:data]];
+        file = [NSURL fileURLWithPath:[self storeInFile:finalFileName fileData:data]];
       } else {
-        file = [NSURL fileURLWithPath:fileName];
+        // Assume local file path - read and save with custom name
+        NSData *fileData = [NSData dataWithContentsOfFile:fileName];
+        file = [NSURL fileURLWithPath:[self storeInFile:finalFileName fileData:fileData]];
       }
     } else if ([fileName hasPrefix:@"http"]) {
       NSURL *url = [NSURL URLWithString:fileName];
@@ -906,6 +921,167 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
 
 + (NSData*) dataFromBase64String:(NSString*)aString {
   return [[NSData alloc] initWithBase64EncodedString:aString options:0];
+}
+
+#pragma mark - MIME Type Helper Methods
+
+/**
+ * Get MIME type from file extension
+ */
+- (NSString*) getMimeTypeFromFileExtension:(NSString*)extension {
+  if (!extension || extension.length == 0) {
+    return nil;
+  }
+
+  // Convert extension to lowercase
+  NSString *ext = [extension lowercaseString];
+
+  // Remove leading dot if present
+  if ([ext hasPrefix:@"."]) {
+    ext = [ext substringFromIndex:1];
+  }
+
+  // Comprehensive MIME type mapping
+  static NSDictionary *mimeTypes = nil;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    mimeTypes = @{
+      // Images
+      @"jpg": @"image/jpeg",
+      @"jpeg": @"image/jpeg",
+      @"png": @"image/png",
+      @"gif": @"image/gif",
+      @"bmp": @"image/bmp",
+      @"tiff": @"image/tiff",
+      @"tif": @"image/tiff",
+      @"webp": @"image/webp",
+      @"ico": @"image/x-icon",
+      @"svg": @"image/svg+xml",
+
+      // Documents
+      @"pdf": @"application/pdf",
+      @"doc": @"application/msword",
+      @"docx": @"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      @"xls": @"application/vnd.ms-excel",
+      @"xlsx": @"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      @"ppt": @"application/vnd.ms-powerpoint",
+      @"pptx": @"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      @"odt": @"application/vnd.oasis.opendocument.text",
+      @"ods": @"application/vnd.oasis.opendocument.spreadsheet",
+      @"odp": @"application/vnd.oasis.opendocument.presentation",
+      @"rtf": @"application/rtf",
+      @"txt": @"text/plain",
+      @"csv": @"text/csv",
+      @"html": @"text/html",
+      @"htm": @"text/html",
+      @"xml": @"text/xml",
+      @"json": @"application/json",
+
+      // Archives
+      @"zip": @"application/zip",
+      @"rar": @"application/vnd.rar",
+      @"7z": @"application/x-7z-compressed",
+      @"tar": @"application/x-tar",
+      @"gz": @"application/gzip",
+      @"bz2": @"application/x-bzip2",
+
+      // Audio
+      @"mp3": @"audio/mpeg",
+      @"wav": @"audio/wav",
+      @"aac": @"audio/aac",
+      @"ogg": @"audio/ogg",
+      @"flac": @"audio/flac",
+      @"m4a": @"audio/mp4",
+      @"wma": @"audio/x-ms-wma",
+      @"mid": @"audio/midi",
+      @"midi": @"audio/midi",
+
+      // Video
+      @"mp4": @"video/mp4",
+      @"m4v": @"video/mp4",
+      @"mov": @"video/quicktime",
+      @"avi": @"video/x-msvideo",
+      @"mkv": @"video/x-matroska",
+      @"wmv": @"video/x-ms-wmv",
+      @"flv": @"video/x-flv",
+      @"webm": @"video/webm",
+      @"3gp": @"video/3gpp",
+      @"3g2": @"video/3gpp2",
+
+      // Other
+      @"apk": @"application/vnd.android.package-archive",
+      @"exe": @"application/octet-stream",
+      @"bin": @"application/octet-stream",
+      @"dll": @"application/octet-stream",
+      @"so": @"application/octet-stream"
+    };
+  });
+
+  NSString *mimeType = [mimeTypes objectForKey:ext];
+  if (mimeType) {
+    return mimeType;
+  }
+
+  // Fallback: use UTType to get MIME type
+  CFStringRef uti = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, (__bridge CFStringRef)ext, NULL);
+  if (uti) {
+    CFStringRef mimeTypeCF = UTTypeCopyPreferredTagWithClass(uti, kUTTagClassMIMEType);
+    CFRelease(uti);
+    if (mimeTypeCF) {
+      NSString *mimeType = (__bridge_transfer NSString *)mimeTypeCF;
+      return mimeType;
+    }
+  }
+
+  // Ultimate fallback
+  return @"application/octet-stream";
+}
+
+/**
+ * Get file extension from MIME type
+ */
+- (NSString*) getFileExtensionFromMimeType:(NSString*)mimeType {
+  if (!mimeType || mimeType.length == 0) {
+    return nil;
+  }
+
+  // Extract subtype from MIME type (e.g., "image/png" -> "png")
+  if ([mimeType containsString:@"/"]) {
+    NSString *subtype = [[mimeType componentsSeparatedByString:@"/"] lastObject];
+
+    // Map common MIME types to extensions
+    static NSDictionary *extensions = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+      extensions = @{
+        @"jpeg": @"jpg",
+        @"plain": @"txt",
+        @"vnd.ms-powerpoint": @"ppt",
+        @"vnd.ms-excel": @"xls",
+        @"vnd.openxmlformats-officedocument.wordprocessingml.document": @"docx",
+        @"vnd.openxmlformats-officedocument.spreadsheetml.sheet": @"xlsx",
+        @"vnd.openxmlformats-officedocument.presentationml.presentation": @"pptx",
+        @"vnd.oasis.opendocument.text": @"odt",
+        @"vnd.oasis.opendocument.spreadsheet": @"ods",
+        @"vnd.oasis.opendocument.presentation": @"odp",
+        @"x-msvideo": @"avi",
+        @"x-matroska": @"mkv",
+        @"quicktime": @"mov",
+        @"svg+xml": @"svg",
+        @"x-icon": @"ico"
+      };
+    });
+
+    NSString *extension = [extensions objectForKey:subtype];
+    if (extension) {
+      return extension;
+    }
+
+    // Default: use subtype directly
+    return subtype;
+  }
+
+  return nil;
 }
 
 #pragma mark - UIPopoverControllerDelegate methods
