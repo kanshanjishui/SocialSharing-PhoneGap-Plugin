@@ -377,7 +377,7 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
     if ([command.arguments objectAtIndex:5] != (id)[NSNull null]) {
       NSArray* attachments = [command.arguments objectAtIndex:5];
       NSFileManager* fileManager = [NSFileManager defaultManager];
-      for (NSString* path in attachments) {
+      for (id path in attachments) {
         NSURL *file = [self getFile:path];
         NSData* data = [fileManager contentsAtPath:file.path];
 
@@ -441,12 +441,36 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
   return presentingViewController;
 }
 
-- (NSString*) getBasenameFromAttachmentPath:(NSString*)path {
-  if ([path hasPrefix:@"base64:"]) {
-    NSString* pathWithoutPrefix = [path stringByReplacingOccurrencesOfString:@"base64:" withString:@""];
-    return [pathWithoutPrefix substringToIndex:[pathWithoutPrefix rangeOfString:@"//"].location];
+- (NSString*) getBasenameFromAttachmentPath:(id)path {
+  // Check if path is a dictionary (object) with url and name
+  if ([path isKindOfClass:[NSDictionary class]]) {
+    NSDictionary *pathDict = (NSDictionary *)path;
+    NSString *url = [pathDict objectForKey:@"url"];
+    NSString *name = [pathDict objectForKey:@"name"];
+    if (name != nil && name != (id)[NSNull null]) {
+      return name;
+    }
+    if (url == nil || (id)url == [NSNull null]) {
+      return @"attachment";
+    }
+    if ([url hasPrefix:@"base64:"]) {
+      NSString* urlWithoutPrefix = [url stringByReplacingOccurrencesOfString:@"base64:" withString:@""];
+      return [urlWithoutPrefix substringToIndex:[urlWithoutPrefix rangeOfString:@"//"].location];
+    }
+    return [url componentsSeparatedByString: @"?"][0];
   }
-  return [path componentsSeparatedByString: @"?"][0];
+
+  // Original string handling
+  if ([path isKindOfClass:[NSString class]]) {
+    NSString *pathString = (NSString *)path;
+    if ([pathString hasPrefix:@"base64:"]) {
+      NSString* pathWithoutPrefix = [pathString stringByReplacingOccurrencesOfString:@"base64:" withString:@""];
+      return [pathWithoutPrefix substringToIndex:[pathWithoutPrefix rangeOfString:@"//"].location];
+    }
+    return [pathString componentsSeparatedByString: @"?"][0];
+  }
+
+  return @"attachment";
 }
 
 - (NSString*) getMimeTypeFromFileExtension:(NSString*)extension {
@@ -749,11 +773,48 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
   return image;
 }
 
--(NSURL*)getFile: (NSString *)fileName {
+-(NSURL*)getFile: (id)fileParam {
+  NSString *fileName = nil;
+  NSString *customFileName = nil;
+
+  // Check if fileParam is a dictionary (object) with url and name
+  if ([fileParam isKindOfClass:[NSDictionary class]]) {
+    NSDictionary *fileDict = (NSDictionary *)fileParam;
+    fileName = [fileDict objectForKey:@"url"];
+    customFileName = [fileDict objectForKey:@"name"];
+    if (fileName == nil || (id)fileName == [NSNull null]) {
+      return nil;
+    }
+  } else if ([fileParam isKindOfClass:[NSString class]]) {
+    fileName = (NSString *)fileParam;
+  } else {
+    return nil;
+  }
+
   NSURL *file = nil;
   if (fileName != (id)[NSNull null]) {
     NSRange rangeData = [fileName rangeOfString:@"data:"];
-    if ([fileName hasPrefix:@"http"]) {
+
+    if (customFileName != nil && customFileName != (id)[NSNull null]) {
+      // Use custom filename if provided
+      if ([fileName hasPrefix:@"http"]) {
+        NSURL *url = [NSURL URLWithString:fileName];
+        NSData *fileData = [NSData dataWithContentsOfURL:url];
+        file = [NSURL fileURLWithPath:[self storeInFile:customFileName fileData:fileData]];
+      } else if ([fileName hasPrefix:@"www/"]) {
+        NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+        NSString *fullPath = [NSString stringWithFormat:@"%@/%@", bundlePath, fileName];
+        file = [NSURL fileURLWithPath:fullPath];
+      } else if ([fileName hasPrefix:@"file://"]) {
+        file = [NSURL fileURLWithPath:[fileName substringFromIndex:6]];
+      } else if (rangeData.location != NSNotFound) {
+        NSString *base64content = (NSString*)[[fileName componentsSeparatedByString: @","] lastObject];
+        NSData* data = [SocialSharing dataFromBase64String:base64content];
+        file = [NSURL fileURLWithPath:[self storeInFile:customFileName fileData:data]];
+      } else {
+        file = [NSURL fileURLWithPath:fileName];
+      }
+    } else if ([fileName hasPrefix:@"http"]) {
       NSURL *url = [NSURL URLWithString:fileName];
       NSData *fileData = [NSData dataWithContentsOfURL:url];
       NSURLRequest *request = [NSURLRequest requestWithURL: url];

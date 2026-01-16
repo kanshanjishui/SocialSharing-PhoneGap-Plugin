@@ -165,7 +165,7 @@ public class SocialSharing extends CordovaPlugin {
             if (dir != null) {
               ArrayList<Uri> fileUris = new ArrayList<Uri>();
               for (int i = 0; i < files.length(); i++) {
-                Uri fileUri = getFileUriAndSetType(draft, dir, files.getString(i), subject, i);
+                Uri fileUri = getFileUriAndSetType(draft, dir, files.get(i), subject, i);
                 fileUri = FileProvider.getUriForFile(webView.getContext(), cordova.getActivity().getPackageName()+".sharing.provider", new File(fileUri.getPath()));
                 if (fileUri != null) {
                   fileUris.add(fileUri);
@@ -275,16 +275,22 @@ public class SocialSharing extends CordovaPlugin {
         sendIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
 
         try {
-          if (files.length() > 0 && !"".equals(files.getString(0))) {
-            final String dir = getDownloadDir();
-            if (dir != null) {
-              ArrayList<Uri> fileUris = new ArrayList<Uri>();
-              Uri fileUri = null;
-              for (int i = 0; i < files.length(); i++) {
-                fileUri = getFileUriAndSetType(sendIntent, dir, files.getString(i), subject, i);
-                fileUri = FileProvider.getUriForFile(webView.getContext(), cordova.getActivity().getPackageName()+".sharing.provider", new File(fileUri.getPath()));
-                fileUris.add(fileUri);
-              }
+          if (files.length() > 0) {
+            Object firstFile = files.get(0);
+            boolean firstFileIsEmpty = false;
+            if (firstFile instanceof String) {
+              firstFileIsEmpty = "".equals(firstFile);
+            }
+            if (!firstFileIsEmpty) {
+              final String dir = getDownloadDir();
+              if (dir != null) {
+                ArrayList<Uri> fileUris = new ArrayList<Uri>();
+                Uri fileUri = null;
+                for (int i = 0; i < files.length(); i++) {
+                  fileUri = getFileUriAndSetType(sendIntent, dir, files.get(i), subject, i);
+                  fileUri = FileProvider.getUriForFile(webView.getContext(), cordova.getActivity().getPackageName()+".sharing.provider", new File(fileUri.getPath()));
+                  fileUris.add(fileUri);
+                }
               if (!fileUris.isEmpty()) {
                 if (hasMultipleAttachments) {
                   sendIntent.putExtra(Intent.EXTRA_STREAM, fileUris);
@@ -409,7 +415,28 @@ public class SocialSharing extends CordovaPlugin {
     toast.show();
   }
 
-  private Uri getFileUriAndSetType(Intent sendIntent, String dir, String image, String subject, int nthFile) throws IOException {
+  private Uri getFileUriAndSetType(Intent sendIntent, String dir, Object fileParam, String subject, int nthFile) throws IOException {
+    String image = null;
+    String customFileName = null;
+
+    // Check if fileParam is a JSONObject (object) with url and name
+    if (fileParam instanceof JSONObject) {
+      try {
+        JSONObject fileObj = (JSONObject) fileParam;
+        image = fileObj.optString("url");
+        customFileName = fileObj.optString("name", null);
+        if (image == null || image.isEmpty()) {
+          return null;
+        }
+      } catch (Exception e) {
+        return null;
+      }
+    } else if (fileParam instanceof String) {
+      image = (String) fileParam;
+    } else {
+      return null;
+    }
+
     // we're assuming an image, but this can be any filetype you like
     String localImage = image;
     if (image.endsWith("mp4") || image.endsWith("mov") || image.endsWith("3gp")){
@@ -420,7 +447,40 @@ public class SocialSharing extends CordovaPlugin {
       sendIntent.setType("image/*");
     }
 
-    if (image.startsWith("http") || image.startsWith("www/")) {
+    if (customFileName != null && !customFileName.isEmpty()) {
+      // Use custom filename if provided
+      if (image.startsWith("http")) {
+        URLConnection connection = new URL(image).openConnection();
+        String fileType = getMIMEType(image);
+        sendIntent.setType(fileType);
+        saveFile(getBytes(connection.getInputStream()), dir, customFileName);
+        localImage = "file://" + dir + "/" + customFileName;
+      } else if (image.startsWith("www/")) {
+        saveFile(getBytes(webView.getContext().getAssets().open(image)), dir, customFileName);
+        localImage = "file://" + dir + "/" + customFileName;
+      } else if (image.startsWith("file://")) {
+        // File already exists, just set MIME type
+        String type = getMIMEType(image);
+        sendIntent.setType(type);
+      } else if (image.startsWith("data:")) {
+        // Safeguard for https://code.google.com/p/android/issues/detail?id#7901#c43
+        if (!image.contains(";base64,")) {
+          sendIntent.setType("text/plain");
+          return null;
+        }
+        final String encodedImg = image.substring(image.indexOf(";base64,") + 8);
+        // Correct the intent type if anything else was passed
+        if (!image.contains("data:image/")) {
+          sendIntent.setType(image.substring(image.indexOf("data:") + 5, image.indexOf(";base64")));
+        }
+        saveFile(Base64.decode(encodedImg, Base64.DEFAULT), dir, customFileName);
+        localImage = "file://" + dir + "/" + customFileName;
+      } else {
+        // Local file path
+        String type = getMIMEType(image);
+        sendIntent.setType(type);
+      }
+    } else if (image.startsWith("http") || image.startsWith("www/")) {
       String filename = getFileName(image);
       localImage = "file://" + dir + "/" + filename.replaceAll("[^a-zA-Z0-9._-]", "");
       if (image.startsWith("http")) {
