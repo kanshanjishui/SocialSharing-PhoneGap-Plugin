@@ -291,12 +291,15 @@ public class SocialSharing extends CordovaPlugin {
                   fileUri = FileProvider.getUriForFile(webView.getContext(), cordova.getActivity().getPackageName()+".sharing.provider", new File(fileUri.getPath()));
                   fileUris.add(fileUri);
                 }
-              if (!fileUris.isEmpty()) {
-                if (hasMultipleAttachments) {
-                  sendIntent.putExtra(Intent.EXTRA_STREAM, fileUris);
-                } else {
-                  sendIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
+                if (!fileUris.isEmpty()) {
+                  if (hasMultipleAttachments) {
+                    sendIntent.putExtra(Intent.EXTRA_STREAM, fileUris);
+                  } else {
+                    sendIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
+                  }
                 }
+              } else {
+                sendIntent.setType("text/plain");
               }
             } else {
               sendIntent.setType("text/plain");

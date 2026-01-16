@@ -746,7 +746,22 @@ static NSString *const kShareOptionIPadCoordinates = @"iPadCoordinates";
   }
 }
 
--(UIImage*)getImage: (NSString *)imageName {
+-(UIImage*)getImage: (id)imageParam {
+  NSString *imageName = nil;
+
+  // Check if imageParam is a dictionary (object) with url and name
+  if ([imageParam isKindOfClass:[NSDictionary class]]) {
+    NSDictionary *imageDict = (NSDictionary *)imageParam;
+    imageName = [imageDict objectForKey:@"url"];
+    if (imageName == nil || (id)imageName == [NSNull null]) {
+      return nil;
+    }
+  } else if ([imageParam isKindOfClass:[NSString class]]) {
+    imageName = (NSString *)imageParam;
+  } else {
+    return nil;
+  }
+
   UIImage *image = nil;
   if (imageName != (id)[NSNull null]) {
     if ([imageName hasPrefix:@"http"]) {
